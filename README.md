@@ -42,6 +42,9 @@ You can also pass the theme on the command line: `streamlit run app.py --theme.b
 
 ### Using the dashboard
 
+The app opens in **Simple view**: a plain-language version written for readers without a quant background, such as undergraduate finance students. It shows the key results in each tab, uses everyday terms (calm / normal / turbulent markets, "is the difference real?") and keeps the standard settings. Switch off **Simple view** at the top of the sidebar for the full **analyst view**, with every statistic, diagnostic and setting described below.
+
+
 | Control | Purpose |
 |---|---|
 | Instrument / custom symbol | One of the built-in instruments (see below), or any Yahoo Finance symbol (`NOK=X`, `^GDAXI`, `SI=F`, …) |

@@ -185,6 +185,55 @@ LAB_COLORS: Final[Dict[str, str]] = {
     LAB_REVERSION_REGIME: "#2DD4BF",
 }
 
+#: Simple-view vocabulary. Data keys stay technical; only labels change.
+SIMPLE_REGIME_NAMES: Final[Dict[str, str]] = {
+    "Low Vol": "Calm",
+    "Normal Vol": "Normal",
+    "High Vol": "Turbulent",
+}
+SIMPLE_MODEL_NAMES: Final[Dict[str, str]] = {
+    "Historical": "Last month's volatility",
+    "EWMA": "EWMA (bank standard)",
+    "GARCH": "GARCH (academic standard)",
+    "HMM": "Regime model (this project)",
+}
+SIMPLE_STRATEGY_NAMES: Final[Dict[str, str]] = {
+    "Buy & Hold": "Buy and hold",
+    "VolTgt · Historical": "Risk-managed · last month's vol",
+    "VolTgt · EWMA": "Risk-managed · EWMA",
+    "VolTgt · GARCH": "Risk-managed · GARCH",
+    "VolTgt · HMM": "Risk-managed · regime model",
+    "HMM De-risk": "Step back when turbulence is likely",
+    "Long (vol-targeted)": "Always long (risk-managed)",
+    "EMA Trend": "Trend signal",
+    "EMA Trend + Regime": "Trend signal + market-state filter",
+    "BB Reversion": "Bollinger signal",
+    "BB Reversion + Regime": "Bollinger signal + market-state filter",
+}
+SIMPLE_BACKTEST_NOTES: Final[Dict[str, str]] = {
+    "FX": (
+        "Buying a currency pair has no built-in long-run return the way "
+        "stocks do, so low returns are expected for every strategy. The "
+        "test that matters is whether risk stays steadier and losses stay "
+        "smaller."
+    ),
+    "Commodity": (
+        "Gold pays no interest or dividends, so returns come only from "
+        "price changes. Judge the strategies mainly on how well they "
+        "control risk."
+    ),
+    "Equity Index": (
+        "Stocks tend to rise over time, so positive returns are normal. "
+        "Dividends are not included. Risk management has historically "
+        "helped stocks most, because turbulent periods often come with "
+        "price drops."
+    ),
+    "Custom": (
+        "Check what this symbol represents before reading too much into "
+        "the returns."
+    ),
+}
+
 #: RiskMetrics daily decay factor for the EWMA variance benchmark.
 EWMA_DECAY: Final[float] = 0.94
 #: Window (days) for rolling strategy-volatility diagnostics.
@@ -2304,6 +2353,8 @@ class ChartFactory:
         colors: Optional[Dict[str, str]] = None,
         emphasis: Sequence[str] = ("HMM",),
         position_title: str = "Leverage (×)",
+        show_positions: bool = True,
+        titles: Tuple[str, str] = ("Growth of 1", "Drawdown (%)"),
     ) -> go.Figure:
         """Equity curves, drawdowns and held positions for all strategies.
 
@@ -2312,11 +2363,14 @@ class ChartFactory:
             colors: Strategy -> colour map (defaults to the vol-target set).
             emphasis: Substrings of strategy names drawn with thicker lines.
             position_title: Axis title for the position panel.
+            show_positions: Whether to draw the position panel.
+            titles: Axis titles for the equity and drawdown panels.
         """
         palette = colors or STRATEGY_COLORS
+        n_rows = 3 if show_positions else 2
         fig = make_subplots(
-            rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.04,
-            row_heights=[0.52, 0.26, 0.22],
+            rows=n_rows, cols=1, shared_xaxes=True, vertical_spacing=0.04,
+            row_heights=[0.52, 0.26, 0.22] if show_positions else [0.64, 0.36],
         )
         for name in bt.returns.columns:
             color = palette.get(name, THEME["muted"])
@@ -2336,23 +2390,25 @@ class ChartFactory:
                 hovertemplate="%{y:.1f}%<extra>" + name + "</extra>",
                 **common,
             ), row=2, col=1)
-            fig.add_trace(go.Scatter(
-                x=bt.weights.index, y=bt.weights[name], name=name,
-                showlegend=False, line=dict(color=color, width=1.0,
-                                            shape="hv"),
-                hovertemplate="%{y:.2f}×<extra>" + name + "</extra>",
-                **common,
-            ), row=3, col=1)
-        cls._base_layout(fig, height=720)
+            if show_positions:
+                fig.add_trace(go.Scatter(
+                    x=bt.weights.index, y=bt.weights[name], name=name,
+                    showlegend=False, line=dict(color=color, width=1.0,
+                                                shape="hv"),
+                    hovertemplate="%{y:.2f}×<extra>" + name + "</extra>",
+                    **common,
+                ), row=3, col=1)
+        cls._base_layout(fig, height=720 if show_positions else 520)
         fig.update_layout(
             hovermode="x unified",
             legend=dict(orientation="h", x=1.0, xanchor="right", y=1.06,
                         bgcolor="rgba(0,0,0,0)"),
         )
         fig.update_xaxes(rangebreaks=cls._rangebreaks(bt.returns.index))
-        fig.update_yaxes(title_text="Growth of 1", type="log", row=1, col=1)
-        fig.update_yaxes(title_text="Drawdown (%)", row=2, col=1)
-        fig.update_yaxes(title_text=position_title, row=3, col=1)
+        fig.update_yaxes(title_text=titles[0], type="log", row=1, col=1)
+        fig.update_yaxes(title_text=titles[1], row=2, col=1)
+        if show_positions:
+            fig.update_yaxes(title_text=position_title, row=3, col=1)
         return fig
 
     @classmethod
@@ -2509,6 +2565,13 @@ class DashboardUI:
                 font-family: {t['mono']}; font-size: 0.74rem;
                 color: {t['muted']};
             }}
+            .intro {{
+                background: {t['panel']};
+                border: 1px solid {t['border']};
+                border-left: 3px solid {t['accent']};
+                border-radius: 6px; padding: 14px 18px; margin: 10px 0 6px 0;
+                color: {t['text']}; line-height: 1.55;
+            }}
             .regime-dot {{
                 display: inline-block; width: 10px; height: 10px;
                 border-radius: 2px; margin-right: 6px;
@@ -2529,12 +2592,31 @@ class DashboardUI:
     # -- sidebar ------------------------------------------------------------
 
     @staticmethod
-    def render_sidebar() -> Optional[
-        Tuple[ModelConfig, WalkForwardConfig, BacktestConfig, SignalConfig]
-    ]:
-        """Collect all settings; returns ``None`` if inputs are invalid."""
+    def render_sidebar() -> Optional[Tuple[
+        bool, ModelConfig, WalkForwardConfig, BacktestConfig, SignalConfig
+    ]]:
+        """Collect all settings; returns ``None`` if inputs are invalid.
+
+        The first element is the Simple-view flag. In Simple view only the
+        market and dates are shown and every other setting keeps its
+        standard default, so the walk-forward results stay cached.
+        """
         sb = st.sidebar
-        sb.markdown("### Model Controls")
+        simple = sb.toggle(
+            "Simple view", value=True, key="simple_view",
+            help="Plain-language version for readers new to quantitative "
+                 "finance. Turn off for the full analyst view with every "
+                 "statistic and setting.",
+        )
+        sb.markdown("### Settings" if simple else "### Model Controls")
+
+        # Standard defaults, used as-is in Simple view.
+        custom = ""
+        train_pct, vol_window, n_restarts, seed = 70, 21, 10, 42
+        refit_every, horizon, wf_restarts = 63, 5, 3
+        target_vol, max_leverage, cost_bps, band = 8.0, 3.0, 1.0, 0.10
+        ema_preset = "50 / 200"
+
         with sb.form("controls"):
             label = st.selectbox(
                 "Instrument", list(INSTRUMENT_BY_LABEL.keys()), index=0,
@@ -2545,11 +2627,12 @@ class DashboardUI:
                      "follow common CFD names (US500 = S&P 500, USTEC = "
                      "Nasdaq 100, US30 = Dow Jones).",
             )
-            custom = st.text_input(
-                "Custom Yahoo symbol (optional)", value="",
-                placeholder="e.g. NOK=X, ^GDAXI, SI=F",
-                help="Overrides the instrument above when filled in.",
-            )
+            if not simple:
+                custom = st.text_input(
+                    "Custom Yahoo symbol (optional)", value="",
+                    placeholder="e.g. NOK=X, ^GDAXI, SI=F",
+                    help="Overrides the instrument above when filled in.",
+                )
             col_a, col_b = st.columns(2)
             start = col_a.date_input(
                 "Start", value=date(2010, 1, 1),
@@ -2559,84 +2642,122 @@ class DashboardUI:
                 "End", value=date.today(),
                 min_value=EARLIEST_DATE, max_value=date.today(),
             )
-            train_pct = st.slider(
-                "In-sample share (%)", min_value=50, max_value=90,
-                value=70, step=5,
-                help="Chronological split. The model is estimated on the "
-                     "first part only and evaluated on the remainder.",
-            )
-            vol_window = st.slider(
-                "Realized-vol window (days)", min_value=5, max_value=63,
-                value=21, step=1,
-                help="21 ≈ one month, 63 ≈ one quarter.",
-            )
-            with st.expander("Estimation settings"):
-                n_restarts = st.slider(
-                    "EM random restarts", min_value=1, max_value=25,
-                    value=10,
-                )
-                seed = int(st.number_input(
-                    "Random seed", min_value=0, max_value=10_000,
-                    value=42, step=1,
-                ))
-            with st.expander("Walk-forward forecasting"):
-                refit_every = st.select_slider(
-                    "Refit every (trading days)",
-                    options=[21, 63, 126, 252], value=63,
-                    help="Models are re-estimated on an expanding window "
-                         "at this frequency. Shorter means more refits "
-                         "and a slower first run.",
-                )
-                horizon = st.select_slider(
-                    "Forecast horizon h (days)", options=[1, 5, 10, 21],
-                    value=5,
-                )
-                wf_restarts = st.slider(
-                    "EM restarts per refit", min_value=1, max_value=10,
-                    value=3,
-                    help="The first restart is warm-started from the "
-                         "previous refit's parameters.",
-                )
-            with st.expander("Vol-target backtest"):
-                target_vol = st.slider(
-                    "Target volatility (%)", min_value=2.0, max_value=20.0,
-                    value=8.0, step=0.5,
-                )
-                max_leverage = st.slider(
-                    "Max leverage (×)", min_value=1.0, max_value=5.0,
-                    value=3.0, step=0.5,
-                )
-                cost_bps = st.slider(
-                    "Cost (bp per 1× notional traded)", min_value=0.0,
-                    max_value=10.0, value=1.0, step=0.25,
-                    help="Half-spread plus slippage. Rough guide: "
-                         "EUR/USD 0.1–0.5 bp institutional, 1–2 bp "
-                         "retail; index futures 0.5–1 bp; gold 1–3 bp.",
-                )
-                band = st.slider(
-                    "Rebalance band (Δ leverage)", min_value=0.0,
-                    max_value=0.5, value=0.10, step=0.05,
-                    help="Trade only when target leverage moves by more "
-                         "than this amount. Reduces turnover.",
-                )
-            with st.expander("Signal lab"):
-                ema_preset = st.selectbox(
-                    "EMA trend (fast / slow)", ["50 / 200", "20 / 100"],
-                    index=0,
-                    help="Standard presets only. Optimising lengths on "
-                         "this sample would be data snooping.",
-                )
-                st.caption(
-                    "Bollinger reversion uses the textbook 20-day bands at "
-                    "±2σ and exits at the middle band. These are fixed."
-                )
-            st.form_submit_button("Run model", type="primary")
+            if simple:
+                st.form_submit_button("Update", type="primary")
+            else:
+                (train_pct, vol_window, n_restarts, seed, refit_every,
+                 horizon, wf_restarts, target_vol, max_leverage, cost_bps,
+                 band, ema_preset) = DashboardUI._advanced_controls()
 
-        sb.caption(
-            "Regimes are inferred with a causal forward filter: each day's "
-            "label uses only data available at that day's close."
+        if simple:
+            sb.caption(
+                "Simple view uses the standard settings. Turn it off to "
+                "adjust the model, the backtest and the trading signals."
+            )
+        else:
+            sb.caption(
+                "Regimes are inferred with a causal forward filter: each "
+                "day's label uses only data available at that day's close."
+            )
+        settings = DashboardUI._build_configs(
+            label, custom, start, end, train_pct, vol_window, n_restarts,
+            seed, refit_every, horizon, wf_restarts, target_vol,
+            max_leverage, cost_bps, band, ema_preset,
         )
+        return None if settings is None else (simple, *settings)
 
+    @staticmethod
+    def _advanced_controls() -> Tuple[
+        int, int, int, int, int, int, int, float, float, float, float, str
+    ]:
+        """Analyst-view controls (rendered inside the sidebar form)."""
+        train_pct = st.slider(
+            "In-sample share (%)", min_value=50, max_value=90,
+            value=70, step=5,
+            help="Chronological split. The model is estimated on the "
+                 "first part only and evaluated on the remainder.",
+        )
+        vol_window = st.slider(
+            "Realized-vol window (days)", min_value=5, max_value=63,
+            value=21, step=1,
+            help="21 ≈ one month, 63 ≈ one quarter.",
+        )
+        with st.expander("Estimation settings"):
+            n_restarts = st.slider(
+                "EM random restarts", min_value=1, max_value=25,
+                value=10,
+            )
+            seed = int(st.number_input(
+                "Random seed", min_value=0, max_value=10_000,
+                value=42, step=1,
+            ))
+        with st.expander("Walk-forward forecasting"):
+            refit_every = st.select_slider(
+                "Refit every (trading days)",
+                options=[21, 63, 126, 252], value=63,
+                help="Models are re-estimated on an expanding window "
+                     "at this frequency. Shorter means more refits "
+                     "and a slower first run.",
+            )
+            horizon = st.select_slider(
+                "Forecast horizon h (days)", options=[1, 5, 10, 21],
+                value=5,
+            )
+            wf_restarts = st.slider(
+                "EM restarts per refit", min_value=1, max_value=10,
+                value=3,
+                help="The first restart is warm-started from the "
+                     "previous refit's parameters.",
+            )
+        with st.expander("Vol-target backtest"):
+            target_vol = st.slider(
+                "Target volatility (%)", min_value=2.0, max_value=20.0,
+                value=8.0, step=0.5,
+            )
+            max_leverage = st.slider(
+                "Max leverage (×)", min_value=1.0, max_value=5.0,
+                value=3.0, step=0.5,
+            )
+            cost_bps = st.slider(
+                "Cost (bp per 1× notional traded)", min_value=0.0,
+                max_value=10.0, value=1.0, step=0.25,
+                help="Half-spread plus slippage. Rough guide: "
+                     "EUR/USD 0.1–0.5 bp institutional, 1–2 bp "
+                     "retail; index futures 0.5–1 bp; gold 1–3 bp.",
+            )
+            band = st.slider(
+                "Rebalance band (Δ leverage)", min_value=0.0,
+                max_value=0.5, value=0.10, step=0.05,
+                help="Trade only when target leverage moves by more "
+                     "than this amount. Reduces turnover.",
+            )
+        with st.expander("Signal lab"):
+            ema_preset = st.selectbox(
+                "EMA trend (fast / slow)", ["50 / 200", "20 / 100"],
+                index=0,
+                help="Standard presets only. Optimising lengths on "
+                     "this sample would be data snooping.",
+            )
+            st.caption(
+                "Bollinger reversion uses the textbook 20-day bands at "
+                "±2σ and exits at the middle band. These are fixed."
+            )
+        st.form_submit_button("Run model", type="primary")
+        return (train_pct, vol_window, n_restarts, seed, refit_every,
+                horizon, wf_restarts, target_vol, max_leverage, cost_bps,
+                band, ema_preset)
+
+    @staticmethod
+    def _build_configs(
+        label: str, custom: str, start: object, end: object,
+        train_pct: int, vol_window: int, n_restarts: int, seed: int,
+        refit_every: int, horizon: int, wf_restarts: int,
+        target_vol: float, max_leverage: float, cost_bps: float,
+        band: float, ema_preset: str,
+    ) -> Optional[Tuple[
+        ModelConfig, WalkForwardConfig, BacktestConfig, SignalConfig
+    ]]:
+        """Validate the inputs and assemble the configuration objects."""
         symbol = custom.strip().upper()
         instrument = (
             Instrument(symbol, "Custom Yahoo symbol", "Custom", (symbol,))
@@ -3317,6 +3438,510 @@ class DashboardUI:
             "advance, or report results across a range of settings."
         )
 
+    # -- simple view ------------------------------------------------------
+
+    @staticmethod
+    def intro(text: str) -> None:
+        """Render a highlighted plain-language explainer box."""
+        st.markdown(f'<div class="intro">{text}</div>',
+                    unsafe_allow_html=True)
+
+    @staticmethod
+    def _verdict(delta: float, p_value: float) -> Tuple[str, str]:
+        """Plain-language verdict for a tested improvement.
+
+        Returns ``(headline, detail)``, e.g. ``("Yes", "...")``.
+        """
+        if np.isnan(p_value):
+            return "Can't tell", "There wasn't enough data to test this."
+        if p_value < 0.05:
+            if delta > 0:
+                return "Yes", "The improvement is statistically real."
+            return "No, it hurts", "It made results reliably worse."
+        return ("No clear effect",
+                "Any difference is small enough to be luck.")
+
+    def render_header_simple(self, result: RegimeResult) -> None:
+        """Plain-language title bar and introduction."""
+        inst = result.config.instrument
+        tr, te = result.train_frame, result.test_frame
+        st.markdown(
+            f'<div class="app-title">{APP_TITLE}</div>'
+            f'<div class="app-subtitle">{inst.label} · '
+            f'{inst.description}</div>',
+            unsafe_allow_html=True,
+        )
+        self.intro(
+            "This dashboard sorts every trading day into one of three "
+            "<b>market states</b>: <b>calm</b>, <b>normal</b> or "
+            "<b>turbulent</b>, based on how much prices are moving. It "
+            "then tests whether knowing the state helps you forecast risk "
+            "and make better trading decisions. Every result uses only "
+            "information that was available at the time, as if the model "
+            "had been running live."
+        )
+        st.markdown(
+            f'<span class="pill">LEARNING PERIOD {tr.index[0]:%b %Y} → '
+            f'{tr.index[-1]:%b %Y}</span>'
+            f'<span class="pill">TEST PERIOD {te.index[0]:%b %Y} → '
+            f'{te.index[-1]:%b %Y}</span>',
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "The model learns from the learning period only. Everything "
+            "shown in these tabs comes from the test period, which the "
+            "model had never seen."
+        )
+        if result.data_source == "snapshot":
+            st.info(
+                "Live prices couldn't be downloaded right now, so this uses "
+                f"saved prices up to {te.index[-1]:%d %b %Y}."
+            )
+        if result.symbol == "GC=F":
+            st.info("Gold prices come from gold futures, which track the "
+                    "spot price closely.")
+
+    def render_regime_tab_simple(
+        self,
+        result: RegimeResult,
+        next_day: FloatArray,
+    ) -> None:
+        """Market State tab in plain language."""
+        te = result.test_frame
+        last = te.iloc[-1]
+        label = str(last["regime"])
+        trans = result.params.trans_mat
+
+        cols = st.columns(4)
+        cols[0].metric(
+            "Market state today", SIMPLE_REGIME_NAMES[label],
+            help="The model's best guess for the most recent trading day.",
+        )
+        cols[1].metric(
+            "How sure the model is", f"{last[f'p_{label}']:.0%}",
+            help="The model's probability that today really is in this "
+                 "state.",
+        )
+        cols[2].metric(
+            "Volatility (past month)", f"{last['realized_vol']:.1%}",
+            help="How much the price has been swinging, scaled to a full "
+                 "year. 8% means a typical one-year move of about ±8%.",
+        )
+        cols[3].metric(
+            "Chance of turbulence tomorrow", f"{next_day[-1]:.0%}",
+            help="The model's probability that tomorrow will be turbulent.",
+        )
+        st.caption(f"As of the close on {te.index[-1]:%A %d %B %Y}.")
+
+        self.section("Price history, colored by market state")
+        st.plotly_chart(
+            ChartFactory.regime_chart(result), width="stretch",
+            config={"displaylogo": False, "scrollZoom": True},
+        )
+        st.caption(
+            "Background color = market state: green is calm, blue is "
+            "normal, red is turbulent. Middle panel: how much prices were "
+            "actually swinging. Bottom panel: how confident the model was "
+            "in each state. Use the buttons at the top left to zoom in."
+        )
+
+        self.section("How the three market states compare")
+        emissions = RegimeAnalytics.emission_summary(
+            result.params, result.scaler
+        ).set_index("Regime")
+        stats = RegimeAnalytics.regime_statistics(te, trans).set_index(
+            "Regime")
+        table = pd.DataFrame({
+            "Market state": [SIMPLE_REGIME_NAMES[r] for r in REGIME_LABELS],
+            "Typical volatility (%)": [
+                emissions.loc[r, "Typical Realized Vol (%)"]
+                for r in REGIME_LABELS],
+            "Share of test days (%)": [
+                stats.loc[r, "Time Share (%)"] for r in REGIME_LABELS],
+            "Typical length (trading days)": [
+                stats.loc[r, "Expected Duration (days)"]
+                for r in REGIME_LABELS],
+            "Chance it continues tomorrow (%)": [
+                100.0 * trans[k, k] for k in range(N_REGIMES)],
+        })
+        num = st.column_config.NumberColumn
+        st.dataframe(
+            table, hide_index=True, width="stretch",
+            column_config={
+                "Typical volatility (%)": num(format="%.1f"),
+                "Share of test days (%)": num(format="%.0f"),
+                "Typical length (trading days)": num(format="%.0f"),
+                "Chance it continues tomorrow (%)": num(format="%.1f"),
+            },
+        )
+        durations = 1.0 / (1.0 - np.diag(trans))
+        st.caption(
+            f"Market states are sticky. Once a turbulent period starts, it "
+            f"typically lasts about {durations[-1]:.0f} trading days; calm "
+            f"periods last about {durations[0]:.0f}. That persistence is "
+            "what makes the states useful for planning ahead."
+        )
+
+    def render_forecast_tab_simple(self, wf: WalkForwardResult) -> None:
+        """Forecast Accuracy tab in plain language."""
+        h = wf.horizon
+        self.section(f"Can the model predict volatility over the next "
+                     f"{h} days?")
+        self.intro(
+            "Every day, four methods predict how much prices will swing "
+            f"over the next {h} trading days, and we check who was closest."
+            "<br>• <b>Last month's volatility</b>: assume the future looks "
+            "like the recent past."
+            "<br>• <b>EWMA</b>: a weighted average that favors recent days. "
+            "Banks use it as a standard (RiskMetrics)."
+            "<br>• <b>GARCH</b>: the classic academic volatility model."
+            "<br>• <b>Regime model</b>: this project's market-state model."
+            "<br>Every method is regularly re-trained on past data only, "
+            "just as it would be in real life."
+        )
+        table = ForecastEvaluator.evaluate(wf, "EWMA")
+        best = str(table.loc[table["QLIKE"].idxmin(), "Model"])
+        hmm = table.set_index("Model").loc["HMM"]
+        delta = float(hmm["Δ QLIKE vs Bench (%)"])
+        p_value = float(hmm["DM p-value"])
+        if np.isnan(p_value):
+            headline = "Can't tell"
+        else:
+            headline = "Yes" if p_value < 0.05 else "Not proven"
+
+        cols = st.columns(3)
+        cols[0].metric("Most accurate method", SIMPLE_MODEL_NAMES[best])
+        cols[1].metric(
+            "Regime model vs EWMA",
+            f"{abs(delta):.1f}% {'less' if delta < 0 else 'more'} error",
+        )
+        cols[2].metric(
+            "Is that difference real?", headline,
+            help="'Yes' means the gap is statistically significant (95% "
+                 "confidence). 'Not proven' means it could be luck.",
+        )
+
+        st.plotly_chart(
+            ChartFactory.forecast_chart(wf), width="stretch",
+            config={"displaylogo": False, "scrollZoom": True},
+        )
+        st.caption(
+            f"Faint white line: the volatility that actually happened over "
+            f"the next {h} days. Colored lines: each method's forecast, "
+            "made in advance. The closer a line tracks the white one, the "
+            "better."
+        )
+
+        ranked = table.sort_values("QLIKE").reset_index(drop=True)
+        simple = pd.DataFrame({
+            "Rank": np.arange(1, len(ranked) + 1),
+            "Method": [SIMPLE_MODEL_NAMES[m] for m in ranked["Model"]],
+            "Error score (lower is better)": ranked["QLIKE"],
+            "Error vs EWMA (%)": ranked["Δ QLIKE vs Bench (%)"],
+            "Difference vs EWMA real?": [
+                "—" if m == "EWMA" else
+                ("Yes" if p < 0.05 else "Not proven")
+                for m, p in zip(ranked["Model"], ranked["DM p-value"])],
+        })
+        num = st.column_config.NumberColumn
+        st.dataframe(
+            simple, hide_index=True, width="stretch",
+            column_config={
+                "Error score (lower is better)": num(format="%.3f"),
+                "Error vs EWMA (%)": num(format="%+.1f"),
+            },
+        )
+        st.caption(
+            "The error score measures how far forecasts were from what "
+            "actually happened, and punishes underestimating risk more "
+            "than overestimating it. 'Real' means the difference passed a "
+            "standard statistical test at 95% confidence."
+        )
+
+    def render_backtest_tab_simple(
+        self,
+        wf: WalkForwardResult,
+        bt_cfg: BacktestConfig,
+        instrument: Instrument,
+    ) -> None:
+        """Risk-Managed Strategy tab in plain language."""
+        bt = VolTargetBacktester(bt_cfg).run(wf)
+        keep = [BUY_AND_HOLD, "VolTgt · EWMA", "VolTgt · HMM"]
+        names = {k: SIMPLE_STRATEGY_NAMES[k] for k in keep}
+        sub = BacktestResult(
+            returns=bt.returns[keep].rename(columns=names),
+            weights=bt.weights[keep].rename(columns=names),
+            costs=bt.costs[keep].rename(columns=names),
+            metrics=bt.metrics,
+            config=bt.config,
+        )
+        m = bt.metrics.set_index("Strategy")
+        hmm, bh = m.loc["VolTgt · HMM"], m.loc[BUY_AND_HOLD]
+
+        self.section("Does the model help manage risk?")
+        self.intro(
+            "This tests a strategy called <b>volatility targeting</b>: hold "
+            "a bigger position when the market is calm and a smaller one "
+            "when it's turbulent, so that risk stays steady at about "
+            f"<b>{100 * bt_cfg.target_vol:.0f}% a year</b>. Each evening "
+            "the strategy decides tomorrow's position using only what was "
+            "known that day, and trading costs are subtracted. It's "
+            "compared with simply buying and holding."
+        )
+        cols = st.columns(4)
+        cols[0].metric(
+            "Annual return · regime model", f"{hmm['CAGR (%)']:+.1f}%",
+            delta=f"{hmm['CAGR (%)'] - bh['CAGR (%)']:+.1f} pts vs buy "
+                  "and hold",
+        )
+        cols[1].metric(
+            "Worst drop · regime model", f"{hmm['Max DD (%)']:.1f}%",
+            delta=f"{hmm['Max DD (%)'] - bh['Max DD (%)']:+.1f} pts vs buy "
+                  "and hold",
+            help="The largest fall from a peak to a low (maximum "
+                 "drawdown). Closer to zero is better.",
+        )
+        cols[2].metric(
+            "Sharpe ratio · regime model", f"{hmm['Sharpe']:.2f}",
+            delta=f"{hmm['Sharpe'] - bh['Sharpe']:+.2f} vs buy and hold",
+            help="Return per unit of risk (annual return ÷ volatility). "
+                 "Higher is better.",
+        )
+        cols[3].metric(
+            "Actual risk vs target", f"{hmm['Ann. Vol (%)']:.1f}%",
+            delta=f"target {100 * bt_cfg.target_vol:.0f}%",
+            delta_color="off",
+            help="How volatile the strategy really was. Close to the "
+                 "target means the risk control worked.",
+        )
+
+        st.plotly_chart(
+            ChartFactory.backtest_chart(
+                sub,
+                colors={names[k]: STRATEGY_COLORS[k] for k in keep},
+                emphasis=("regime",), show_positions=False,
+                titles=("Value of $1", "Drop from peak (%)"),
+            ),
+            width="stretch",
+            config={"displaylogo": False, "scrollZoom": True},
+        )
+        st.caption(
+            "Top: how $1 would have grown. Bottom: how far each strategy "
+            "was below its previous high at each point, so shallower dips "
+            "are better."
+        )
+
+        rows = m.loc[keep]
+        table = pd.DataFrame({
+            "Strategy": [names[k] for k in keep],
+            "Annual return (%)": rows["CAGR (%)"].to_numpy(),
+            "Volatility (%)": rows["Ann. Vol (%)"].to_numpy(),
+            "Sharpe ratio": rows["Sharpe"].to_numpy(),
+            "Worst drop (%)": rows["Max DD (%)"].to_numpy(),
+            "Trading costs (% per year)": (
+                rows["Cost Drag (bp/yr)"].to_numpy() / 100.0),
+        })
+        num = st.column_config.NumberColumn
+        st.dataframe(
+            table, hide_index=True, width="stretch",
+            column_config={
+                "Annual return (%)": num(format="%+.2f"),
+                "Volatility (%)": num(format="%.2f"),
+                "Sharpe ratio": num(format="%+.2f"),
+                "Worst drop (%)": num(format="%.1f"),
+                "Trading costs (% per year)": num(format="%.2f"),
+            },
+        )
+        st.caption(
+            SIMPLE_BACKTEST_NOTES.get(instrument.asset_class,
+                                      SIMPLE_BACKTEST_NOTES["Custom"])
+        )
+
+    def render_signal_tab_simple(
+        self,
+        wf: WalkForwardResult,
+        sig_cfg: SignalConfig,
+        bt_cfg: BacktestConfig,
+    ) -> None:
+        """Trading Signals tab in plain language."""
+        lab = SignalLab(sig_cfg, bt_cfg).run(wf)
+        tests = lab.filter_tests
+        self.section("Do popular trading signals work better with the "
+                     "market-state model?")
+        self.intro(
+            "Two well-known technical-analysis signals:"
+            "<br>• <b>Trend signal</b>: buy when the "
+            f"{sig_cfg.ema_fast}-day average price is above the "
+            f"{sig_cfg.ema_slow}-day average, "
+            "sell when it's below. The idea is to ride trends."
+            "<br>• <b>Bollinger signal</b>: buy when the price drops "
+            "unusually far below its recent average, sell when it rises "
+            "unusually far above it, expecting it to snap back."
+            "<br>Each one is also tested with a <b>market-state filter</b>: "
+            "the trend signal trades less when turbulence is likely, and "
+            "the Bollinger signal trades mainly when the market is calm. "
+            "Did the filter help?"
+        )
+        cols = st.columns(2)
+        for col, (a, b), title in zip(
+            cols,
+            [(LAB_TREND_REGIME, LAB_TREND),
+             (LAB_REVERSION_REGIME, LAB_REVERSION)],
+            ["Trend signal", "Bollinger signal"],
+        ):
+            row = tests[(tests["Strategy A"] == a)
+                        & (tests["Strategy B"] == b)].iloc[0]
+            headline, detail = self._verdict(float(row["Δ Sharpe"]),
+                                             float(row["p-value"]))
+            col.metric(
+                f"{title}: did the filter help?", headline,
+                delta=f"Sharpe {row['Δ Sharpe']:+.2f}", delta_color="off",
+                help=detail,
+            )
+
+        st.plotly_chart(
+            ChartFactory.signal_chart(lab), width="stretch",
+            config={"displaylogo": False, "scrollZoom": True},
+        )
+        st.caption(
+            "Top: price (white), the two moving averages (orange) and the "
+            "Bollinger bands (purple area), over the market-state colors. "
+            "Bottom: when each signal was long (+), short (−) or out of "
+            "the market (0)."
+        )
+
+        names = {k: SIMPLE_STRATEGY_NAMES[k]
+                 for k in lab.backtest.returns.columns}
+        bt = lab.backtest
+        renamed = BacktestResult(
+            returns=bt.returns.rename(columns=names),
+            weights=bt.weights.rename(columns=names),
+            costs=bt.costs.rename(columns=names),
+            metrics=bt.metrics, config=bt.config,
+        )
+        st.plotly_chart(
+            ChartFactory.backtest_chart(
+                renamed,
+                colors={names[k]: LAB_COLORS[k] for k in names},
+                emphasis=("filter",), show_positions=False,
+                titles=("Value of $1", "Drop from peak (%)"),
+            ),
+            width="stretch",
+            config={"displaylogo": False, "scrollZoom": True},
+        )
+
+        m = bt.metrics
+        st.dataframe(
+            pd.DataFrame({
+                "Strategy": [names[s] for s in m["Strategy"]],
+                "Annual return (%)": m["CAGR (%)"],
+                "Sharpe ratio": m["Sharpe"],
+                "Worst drop (%)": m["Max DD (%)"],
+            }),
+            hide_index=True, width="stretch",
+            column_config={
+                "Annual return (%)": st.column_config.NumberColumn(
+                    format="%+.2f"),
+                "Sharpe ratio": st.column_config.NumberColumn(
+                    format="%+.2f"),
+                "Worst drop (%)": st.column_config.NumberColumn(
+                    format="%.1f"),
+            },
+        )
+
+        self.section("Where does each signal work best?")
+        rb = lab.regime_breakdown
+        rb = rb[rb["Strategy"].isin([LAB_TREND, LAB_REVERSION])]
+        pivot = rb.pivot(index="Strategy", columns="Regime (t+1 forecast)",
+                         values="Ann. Return (%)")[list(REGIME_LABELS)]
+        pivot.columns = [f"{SIMPLE_REGIME_NAMES[c]} (%)"
+                         for c in pivot.columns]
+        pivot.index = [SIMPLE_STRATEGY_NAMES[i] for i in pivot.index]
+        st.dataframe(
+            pivot.reset_index(names="Signal"), hide_index=True,
+            width="stretch",
+            column_config={c: st.column_config.NumberColumn(format="%+.1f")
+                           for c in pivot.columns},
+        )
+        st.caption(
+            "Annual return of each signal on days the model expected to be "
+            "calm, normal or turbulent. This shows where a signal tends to "
+            "work, but it's a description of the past, not a guarantee."
+        )
+
+    @staticmethod
+    def render_methodology_simple() -> None:
+        """Plain-English explanation and glossary."""
+        st.markdown("#### What is this?")
+        st.markdown(
+            "Markets go through quiet stretches and stormy stretches. This "
+            "project uses a statistical model to detect which kind of "
+            "stretch the market is in, then asks whether that is useful "
+            "for an investor."
+        )
+        st.markdown("#### How the model works, in four steps")
+        st.markdown(
+            "1. **Measure how jumpy prices are.** Each day we look at the "
+            "daily price changes over the past month. Bigger swings mean "
+            "higher volatility.\n"
+            "2. **Assume the market has hidden moods.** The model, a "
+            "*Hidden Markov Model*, assumes there are three moods (calm, "
+            "normal, turbulent), each with its own typical swing size. We "
+            "never see the mood directly, only the price moves.\n"
+            "3. **Learn from history.** From past data, the model learns "
+            "what each mood looks like and how often the market switches "
+            "between them. Moods are sticky: a calm day is usually "
+            "followed by another calm day.\n"
+            "4. **Read today's mood.** Each day it combines today's price "
+            "move with what it knew yesterday to estimate the current "
+            "mood, using **only information available that day**."
+        )
+        st.markdown("#### Why 'no peeking' matters")
+        st.markdown(
+            "A model that is allowed to see the future always looks "
+            "brilliant on paper. Here, every forecast and every trade uses "
+            "only past data, and the models are re-trained regularly as "
+            "new data arrives, exactly as they would be if you ran them "
+            "live. That makes the results believable."
+        )
+        st.markdown("#### What it can't do")
+        st.markdown(
+            "- It describes risk. It doesn't predict whether prices go up "
+            "or down.\n"
+            "- Past patterns can break, for example after a crisis or a "
+            "change in central-bank policy.\n"
+            "- The free price data can have small gaps or errors, and the "
+            "backtests ignore some real-world costs such as interest on "
+            "borrowed money."
+        )
+        st.markdown("#### Glossary")
+        st.markdown(
+            "| Term | Meaning |\n|---|---|\n"
+            "| Volatility | How much a price swings. Shown per year: 10% "
+            "means a typical yearly move of about ±10%. |\n"
+            "| Market state (regime) | The model's label for current "
+            "conditions: calm, normal or turbulent. |\n"
+            "| Learning / test period | The model learns from the first "
+            "part of the data and is judged on the later part it never "
+            "saw. |\n"
+            "| Sharpe ratio | Return per unit of risk (annual return ÷ "
+            "volatility). Higher is better. |\n"
+            "| Worst drop (max drawdown) | The biggest fall from a peak to "
+            "a later low. |\n"
+            "| Volatility targeting | Holding more when markets are calm "
+            "and less when they're turbulent, to keep risk steady. |\n"
+            "| Statistically real (significant) | The result is unlikely "
+            "to be luck, at 95% confidence. |\n"
+            "| Trading costs | The small fee lost every time a position is "
+            "changed (bid-ask spread). |\n"
+            "| EWMA / GARCH | Two standard ways to forecast volatility, "
+            "used as benchmarks. |"
+        )
+        st.caption(
+            "Turn off Simple view in the sidebar to see the full "
+            "mathematical methodology."
+        )
+
     # -- entry point --------------------------------------------------------
 
     def run(self) -> None:
@@ -3326,10 +3951,10 @@ class DashboardUI:
         if settings is None:
             st.stop()
             return
-        config, wf_cfg, bt_cfg, sig_cfg = settings
+        simple, config, wf_cfg, bt_cfg, sig_cfg = settings
 
         try:
-            with st.spinner("Fetching data and fitting the HMM…"):
+            with st.spinner("Fetching data and fitting the model…"):
                 result = run_regime_pipeline(
                     config.instrument, config.start, config.end,
                     config.train_fraction, config.vol_window,
@@ -3350,19 +3975,30 @@ class DashboardUI:
         ].to_numpy()[-1]
         next_day = filtered_last @ result.params.trans_mat
 
-        self.render_header(result)
-        tabs = st.tabs([
-            "Regime Monitor", "Volatility Forecasts",
-            "Vol-Target Backtest", "Signal Lab", "Methodology",
-        ])
-        with tabs[0]:
-            self.section("Snapshot")
-            self.render_kpis(result, next_day)
-            self.render_main_chart(result)
-            self.render_bottom_row(result)
-            self.render_diagnostics(result)
-        with tabs[4]:
-            self.render_methodology()
+        if simple:
+            self.render_header_simple(result)
+            tabs = st.tabs([
+                "Market State", "Forecast Accuracy",
+                "Risk-Managed Strategy", "Trading Signals", "How It Works",
+            ])
+            with tabs[0]:
+                self.render_regime_tab_simple(result, next_day)
+            with tabs[4]:
+                self.render_methodology_simple()
+        else:
+            self.render_header(result)
+            tabs = st.tabs([
+                "Regime Monitor", "Volatility Forecasts",
+                "Vol-Target Backtest", "Signal Lab", "Methodology",
+            ])
+            with tabs[0]:
+                self.section("Snapshot")
+                self.render_kpis(result, next_day)
+                self.render_main_chart(result)
+                self.render_bottom_row(result)
+                self.render_diagnostics(result)
+            with tabs[4]:
+                self.render_methodology()
 
         wf: Optional[WalkForwardResult] = None
         with tabs[1]:
@@ -3372,17 +4008,25 @@ class DashboardUI:
                     np.linalg.LinAlgError) as exc:
                 st.error(f"Walk-forward run failed: {exc}")
             if wf is not None:
-                self.render_forecast_tab(wf)
+                if simple:
+                    self.render_forecast_tab_simple(wf)
+                else:
+                    self.render_forecast_tab(wf)
+        missing = ("This section needs the walk-forward results, which "
+                   "failed to run.")
         with tabs[2]:
             if wf is None:
-                st.info("The backtest needs the walk-forward forecasts, "
-                        "which failed to run.")
+                st.info(missing)
+            elif simple:
+                self.render_backtest_tab_simple(wf, bt_cfg,
+                                                config.instrument)
             else:
                 self.render_backtest_tab(wf, bt_cfg, config.instrument)
         with tabs[3]:
             if wf is None:
-                st.info("The signal lab needs the walk-forward regime "
-                        "probabilities, which failed to run.")
+                st.info(missing)
+            elif simple:
+                self.render_signal_tab_simple(wf, sig_cfg, bt_cfg)
             else:
                 self.render_signal_tab(wf, sig_cfg, bt_cfg)
 
